@@ -1,3 +1,5 @@
+import json
+
 import pandas as pd
 
 import Author
@@ -5,13 +7,22 @@ import Document
 
 
 class Corpus:
+	_instance = None
+	_initialized = False
+
+	def __new__(cls, nom: str) -> "Corpus":
+		if cls._instance is None:
+			cls._instance = super().__new__(cls)
+		return cls._instance
 
 	def __init__(self, nom: str) -> None:
-		self.nom: str = nom
-		self.authors: dict = dict()
-		self.id2doc: dict = dict()
-		self.ndoc: int = 0
-		self.naut: int = 0
+		if not Corpus._initialized:
+			self.nom: str = nom
+			self.authors: dict = dict()
+			self.id2doc: dict = dict()
+			self.ndoc: int = 0
+			self.naut: int = 0
+			Corpus._initialized = True
 
 
 	def addDocument(self, document: Document.Document) -> None:
@@ -67,6 +78,17 @@ class Corpus:
 			print(document)
 
 
+	def showBySource(self, n: int) -> None:
+		"""
+		Affiche les n premiers documents avec leur source.
+		"""
+
+		documents: list[Document.Document] = list(self.id2doc.values())
+		for i in range(min(n, len(documents))):
+			document: Document.Document = documents[i]
+			print("%s - %s" % (document.getType(), document))
+
+
 	def __repr__(self) -> str:
 		"""
 		Renvoie une représentation textuelle du corpus, incluant son nom, le nombre de documents et le nombre d'auteurs.
@@ -91,12 +113,24 @@ class Corpus:
 
 		for i in range(self.ndoc):
 			document: Document.Document = self.id2doc[i]
-			data.append({
+			row = {
 				"titre": document.titre,
 				"auteur": document.auteur,
 				"date": document.date,
-				"texte": document.texte
-			})
+				"url": document.url,
+				"texte": document.texte,
+				"type": document.getType(),
+			}
+			if isinstance(document, Document.HackerNewsDocument):
+				row["nb_comments"] = document.getNbComments()
+				row["co_auteurs"] = ""
+			elif isinstance(document, Document.ArxivDocument):
+				row["nb_comments"] = 0
+				row["co_auteurs"] = json.dumps(document.getCoAuteurs(), ensure_ascii=False)
+			else:
+				row["nb_comments"] = 0
+				row["co_auteurs"] = ""
+			data.append(row)
 
 		dataFrame: pd.DataFrame = pd.DataFrame(data)
 		dataFrame.to_csv(fileName, index=False)
@@ -118,12 +152,26 @@ class Corpus:
 		for i in range(len(dataFrame)):
 
 			row: pd.Series = dataFrame.iloc[i]
-			document: Document.Document = Document.Document(
-				row["titre"],
-				row["auteur"],
-				row["date"],
-				row["url"],
-				row["texte"],
-			)
+			document_type = str(row.get("type", "Document"))
+			if document_type.lower().replace(" ", "") == "hackernews":
+				nb_comments = row.get("nb_comments", 0)
+				if pd.isna(nb_comments):
+					nb_comments = 0
+				document = Document.HackerNewsDocument(
+					row["titre"], row["auteur"], row["date"], row["url"], row["texte"],
+					int(nb_comments),
+				)
+			elif document_type.lower().replace(" ", "") == "arxiv":
+				co_auteurs = row.get("co_auteurs", "")
+				if pd.isna(co_auteurs):
+					co_auteurs = []
+				document = Document.DocumentFactory.create(
+					"arxiv", row["titre"], row["auteur"], row["date"], row["url"], row["texte"],
+					co_auteurs=co_auteurs,
+				)
+			else:
+				document = Document.Document(
+					row["titre"], row["auteur"], row["date"], row["url"], row["texte"],
+				)
 
 			self.addDocument(document)
